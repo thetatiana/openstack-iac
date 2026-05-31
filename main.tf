@@ -1,24 +1,48 @@
 locals {
   vm_requests = yamldecode(file("${path.module}/vm-requests.yaml"))
 
-  k8s_control_plane_requests = yamldecode(file("${path.module}/Kubernetes/test/control-plane-requests.yaml"))
-  k8s_worker_requests        = yamldecode(file("${path.module}/Kubernetes/test/worker-node-requests.yaml"))
+  k8s_cluster_dirs = fileset("${path.module}/Kubernetes", "*")
+
+  k8s_control_plane_request_files = [
+    for cluster in local.k8s_cluster_dirs :
+    "${path.module}/Kubernetes/${cluster}/control-plane-requests.yaml"
+    if fileexists("${path.module}/Kubernetes/${cluster}/control-plane-requests.yaml")
+  ]
+
+  k8s_worker_request_files = [
+    for cluster in local.k8s_cluster_dirs :
+    "${path.module}/Kubernetes/${cluster}/worker-node-requests.yaml"
+    if fileexists("${path.module}/Kubernetes/${cluster}/worker-node-requests.yaml")
+  ]
+
+  k8s_control_plane_maps = [
+    for request_file in local.k8s_control_plane_request_files :
+    yamldecode(file(request_file)).control_planes
+  ]
+
+  k8s_worker_maps = [
+    for request_file in local.k8s_worker_request_files :
+    yamldecode(file(request_file)).workers
+  ]
+
+  k8s_control_planes = length(local.k8s_control_plane_maps) > 0 ? merge(local.k8s_control_plane_maps...) : {}
+  k8s_workers        = length(local.k8s_worker_maps) > 0 ? merge(local.k8s_worker_maps...) : {}
 
   vms = merge(
     local.vm_requests.vms,
-    local.k8s_control_plane_requests.control_planes,
-    local.k8s_worker_requests.workers
+    local.k8s_control_planes,
+    local.k8s_workers
   )
-
-  k8s_vms = {
-    for name, vm in local.vms : name => vm
-    if try(vm.cluster, null) != null
-  }
 
   floating_ip_vms = {
     for name, vm in local.vms : name => vm
     if vm.floating_ip
   }
+
+  k8s_vms = merge(
+    local.k8s_control_planes,
+    local.k8s_workers
+  )
 }
 
 data "openstack_images_image_v2" "images" {
@@ -73,14 +97,21 @@ resource "openstack_networking_secgroup_rule_v2" "ssh" {
   security_group_id = openstack_networking_secgroup_v2.vm[each.key].id
 }
 
+resource "openstack_networking_secgroup_rule_v2" "private_internal" {
+  for_each = local.vms
+
+  direction         = "ingress"
+  ethertype         = "IPv4"
+  remote_ip_prefix  = var.private_subnet_cidr
+  security_group_id = openstack_networking_secgroup_v2.vm[each.key].id
+}
+
 resource "openstack_networking_secgroup_rule_v2" "k8s_private_tcp" {
   for_each = local.k8s_vms
 
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "tcp"
-  port_range_min    = 1
-  port_range_max    = 65535
   remote_ip_prefix  = var.private_subnet_cidr
   security_group_id = openstack_networking_secgroup_v2.vm[each.key].id
 }
@@ -91,8 +122,6 @@ resource "openstack_networking_secgroup_rule_v2" "k8s_private_udp" {
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "udp"
-  port_range_min    = 1
-  port_range_max    = 65535
   remote_ip_prefix  = var.private_subnet_cidr
   security_group_id = openstack_networking_secgroup_v2.vm[each.key].id
 }

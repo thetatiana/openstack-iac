@@ -1,91 +1,146 @@
 #!/usr/bin/env python3
 
 import os
-import re
-import sys
 from pathlib import Path
 
 import yaml
 
-YAML_PATH = Path("vm-requests.yaml")
+
+ROOT = Path.cwd()
 
 
-def required_env(name: str) -> str:
-    value = os.getenv(name)
-    if value is None or value.strip() == "":
-        print(f"ERROR: Required environment variable {name} is empty", file=sys.stderr)
-        sys.exit(1)
-    return value.strip()
+def require_env(name: str) -> str:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        raise SystemExit(f"Missing required environment variable: {name}")
+    return value
 
 
-def optional_env(name: str, default: str | None = None) -> str | None:
-    value = os.getenv(name)
-    if value is None or value.strip() == "":
-        return default
-    return value.strip()
-
-
-def parse_bool(value: str) -> bool:
+def bool_from_string(value: str) -> bool:
     normalized = value.strip().lower()
-    if normalized in {"true", "yes", "y", "1"}:
+
+    if normalized == "true":
         return True
-    if normalized in {"false", "no", "n", "0"}:
+
+    if normalized == "false":
         return False
-    print(f"ERROR: VM_FLOATING_IP must be true/false, got: {value}", file=sys.stderr)
-    sys.exit(1)
+
+    raise SystemExit(f"Expected true/false value, got: {value}")
 
 
-def validate_vm_name(name: str) -> None:
-    if not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{1,62}$", name):
-        print(
-            "ERROR: VM_NAME must be 2-63 chars and contain only letters, numbers, dots, underscores or hyphens",
-            file=sys.stderr,
+def load_yaml(path: Path, default: dict) -> dict:
+    if not path.exists():
+        return default
+
+    with path.open("r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+
+    return data if data is not None else default
+
+
+def save_yaml(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    with path.open("w", encoding="utf-8") as f:
+        yaml.safe_dump(
+            data,
+            f,
+            default_flow_style=False,
+            sort_keys=False,
+            allow_unicode=True,
         )
-        sys.exit(1)
 
 
-def main() -> None:
-    vm_name = required_env("VM_NAME")
-    validate_vm_name(vm_name)
-
-    vm = {
-        "image": required_env("VM_IMAGE"),
-        "flavor": required_env("VM_FLAVOR"),
-        "network": required_env("VM_NETWORK"),
-        "keypair": required_env("VM_KEYPAIR"),
-        "floating_ip": parse_bool(required_env("VM_FLOATING_IP")),
+def build_vm_spec() -> dict:
+    return {
+        "image": require_env("VM_IMAGE"),
+        "flavor": require_env("VM_FLAVOR"),
+        "network": require_env("VM_NETWORK"),
+        "keypair": require_env("VM_KEYPAIR"),
+        "floating_ip": bool_from_string(require_env("VM_FLOATING_IP")),
+        "admin_cidr": require_env("VM_ADMIN_CIDR"),
     }
 
-    admin_cidr = optional_env("VM_ADMIN_CIDR")
-    if admin_cidr:
-        vm["admin_cidr"] = admin_cidr
 
-    if YAML_PATH.exists():
-        with YAML_PATH.open("r", encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
-    else:
-        data = {}
+def add_base_vm(vm_name: str, vm_spec: dict) -> None:
+    path = ROOT / "vm-requests.yaml"
+    data = load_yaml(path, {"vms": {}})
 
     if "vms" not in data or data["vms"] is None:
         data["vms"] = {}
 
-    if vm_name in data["vms"]:
-        print(f"ERROR: VM '{vm_name}' already exists in vm-requests.yaml", file=sys.stderr)
-        print("Change VM_NAME or delete/update the existing entry manually.", file=sys.stderr)
-        sys.exit(1)
+    data["vms"][vm_name] = vm_spec
+    save_yaml(path, data)
 
-    data["vms"][vm_name] = vm
 
-    with YAML_PATH.open("w", encoding="utf-8") as f:
-        yaml.safe_dump(
-            data,
-            f,
-            sort_keys=False,
-            default_flow_style=False,
-            allow_unicode=True,
-        )
+def ensure_cluster_yaml(cluster: str) -> None:
+    path = ROOT / "Kubernetes" / cluster / "cluster.yaml"
 
-    print(f"Added VM request: {vm_name}")
+    if path.exists():
+        return
+
+    data = {
+        "cluster": {
+            "name": cluster,
+            "pod_cidr": "172.16.0.0/16",
+            "service_cidr": "10.96.0.0/12",
+            "cilium": {
+                "ipam_mode": "cluster-pool",
+                "cluster_pool_ipv4_pod_cidr_list": "172.16.0.0/16",
+                "cluster_pool_ipv4_mask_size": 24,
+            },
+        }
+    }
+
+    save_yaml(path, data)
+
+
+def add_kubernetes_control_plane(cluster: str, vm_name: str, vm_spec: dict) -> None:
+    path = ROOT / "Kubernetes" / cluster / "control-plane-requests.yaml"
+    data = load_yaml(path, {"control_planes": {}})
+
+    if "control_planes" not in data or data["control_planes"] is None:
+        data["control_planes"] = {}
+
+    data["control_planes"][vm_name] = vm_spec
+    save_yaml(path, data)
+
+
+def add_kubernetes_worker(cluster: str, vm_name: str, vm_spec: dict) -> None:
+    path = ROOT / "Kubernetes" / cluster / "worker-node-requests.yaml"
+    data = load_yaml(path, {"workers": {}})
+
+    if "workers" not in data or data["workers"] is None:
+        data["workers"] = {}
+
+    data["workers"][vm_name] = vm_spec
+    save_yaml(path, data)
+
+
+def main() -> None:
+    vm_type = require_env("VM_TYPE")
+    vm_name = require_env("VM_NAME")
+    vm_spec = build_vm_spec()
+
+    if vm_type == "base":
+        add_base_vm(vm_name, vm_spec)
+        return
+
+    cluster = require_env("K8S_CLUSTER")
+    ensure_cluster_yaml(cluster)
+
+    if vm_type == "kubernetes-control-plane":
+        add_kubernetes_control_plane(cluster, vm_name, vm_spec)
+        return
+
+    if vm_type == "kubernetes-worker":
+        add_kubernetes_worker(cluster, vm_name, vm_spec)
+        return
+
+    raise SystemExit(
+        "Unsupported VM_TYPE. Expected one of: "
+        "base, kubernetes-control-plane, kubernetes-worker"
+    )
 
 
 if __name__ == "__main__":

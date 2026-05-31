@@ -1,0 +1,29 @@
+---
+- name: Prepare requested Kubernetes worker node
+  hosts: "{{ target_worker }}"
+  become: true
+  roles:
+    - common
+
+- name: Generate kubeadm join command on control-plane
+  hosts: control_plane[0]
+  become: true
+  tasks:
+    - name: Generate kubeadm join command
+      command: kubeadm token create --print-join-command
+      register: kubeadm_join_command
+      changed_when: false
+
+    - name: Save kubeadm join command with configured API endpoint
+      copy:
+        dest: /tmp/kubeadm_join_command.sh
+        content: "{{ kubeadm_join_command.stdout | regex_replace('kubeadm join [^ ]+', 'kubeadm join ' ~ k8s_api_endpoint ~ ':6443') }}\n"
+        owner: root
+        group: root
+        mode: "0600"
+
+- name: Join requested worker to Kubernetes cluster
+  hosts: "{{ target_worker }}"
+  become: true
+  roles:
+    - worker
