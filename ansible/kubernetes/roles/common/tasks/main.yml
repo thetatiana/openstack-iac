@@ -195,16 +195,30 @@
   delay: 20
   until: kubernetes_apt_cache is succeeded
 
+- name: Check installed Kubernetes package versions
+  shell: |
+    dpkg-query -W -f='${Package}=${Version}\n' kubelet kubeadm kubectl 2>/dev/null || true
+  register: installed_kubernetes_packages
+  changed_when: false
+
 - name: Install Kubernetes packages with hard timeout
   shell: |
-    timeout 300 apt-get install -y \
+    timeout 900 apt-get install -y \
       kubelet=1.31.14-1.1 \
       kubeadm=1.31.14-1.1 \
       kubectl=1.31.14-1.1
   register: kubernetes_packages
-  retries: 3
+  retries: 2
   delay: 30
   until: kubernetes_packages.rc == 0
+  when: >
+    'kubelet=1.31.14-1.1' not in installed_kubernetes_packages.stdout or
+    'kubeadm=1.31.14-1.1' not in installed_kubernetes_packages.stdout or
+    'kubectl=1.31.14-1.1' not in installed_kubernetes_packages.stdout
+
+- name: Finish interrupted package configuration
+  command: dpkg --configure -a
+  changed_when: false
 
 - name: Hold Kubernetes packages
   dpkg_selections:
