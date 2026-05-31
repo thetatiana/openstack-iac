@@ -209,10 +209,19 @@
   when: cilium_status.rc != 0
 
 - name: Wait for Cilium to become ready
-  command: cilium status --wait
+  command: cilium status --wait --wait-duration 120s
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
   changed_when: false
+  register: cilium_wait
+  failed_when: false
+
+- name: Show Cilium status if not ready yet
+  command: cilium status --wait=false
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  changed_when: false
+  when: cilium_wait.rc != 0
 
 - name: Generate kubeadm join command
   command: kubeadm token create --print-join-command
