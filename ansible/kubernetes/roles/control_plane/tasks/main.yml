@@ -87,13 +87,20 @@
 
 - name: Renew apiserver certificate with floating IP SAN
   command: kubeadm init phase certs apiserver --config /tmp/kubeadm-renew-apiserver.yaml
+  register: apiserver_cert_renew
   when:
     - kubeadm_admin_conf.stat.exists
     - ansible_host not in apiserver_cert_sans.stdout
-  notify: Restart kube-apiserver static pod
 
-- name: Flush handlers after apiserver certificate renewal
-  meta: flush_handlers
+- name: Restart kube-apiserver static pod after certificate renewal
+  shell: |
+    mv /etc/kubernetes/manifests/kube-apiserver.yaml /tmp/kube-apiserver.yaml
+    sleep 10
+    mv /tmp/kube-apiserver.yaml /etc/kubernetes/manifests/kube-apiserver.yaml
+    sleep 20
+  when:
+    - apiserver_cert_renew is defined
+    - apiserver_cert_renew.changed
 
 - name: Read kubeadm ConfigMap
   command: kubectl -n kube-system get cm kubeadm-config -o yaml
@@ -102,20 +109,37 @@
   register: kubeadm_configmap
   changed_when: false
 
-- name: Write kubeadm ConfigMap with floating controlPlaneEndpoint
+- name: Write kubeadm ConfigMap with floating API endpoint
   copy:
     dest: /tmp/kubeadm-config.yaml
-    content: "{{ kubeadm_configmap.stdout | replace(ansible_default_ipv4.address ~ ':6443', ansible_host ~ ':6443') }}"
+    content: >-
+      {{
+        kubeadm_configmap.stdout
+        | replace(ansible_default_ipv4.address ~ ':6443', ansible_host ~ ':6443')
+        | replace(ansible_default_ipv4.address, ansible_host)
+      }}
     owner: root
     group: root
     mode: "0600"
-  when: ansible_default_ipv4.address ~ ':6443' in kubeadm_configmap.stdout
+  when: ansible_default_ipv4.address in kubeadm_configmap.stdout
 
-- name: Apply kubeadm ConfigMap with floating controlPlaneEndpoint
+- name: Apply kubeadm ConfigMap with floating API endpoint
   command: kubectl apply -f /tmp/kubeadm-config.yaml
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
-  when: ansible_default_ipv4.address ~ ':6443' in kubeadm_configmap.stdout
+  when: ansible_default_ipv4.address in kubeadm_configmap.stdout
+
+- name: Verify kubeadm ConfigMap endpoint after update
+  shell: |
+    kubectl -n kube-system get cm kubeadm-config -o yaml | grep -E "{{ ansible_default_ipv4.address }}|{{ ansible_host }}" || true
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: kubeadm_configmap_endpoint_verify
+  changed_when: false
+
+- name: Show kubeadm ConfigMap endpoint verification
+  debug:
+    var: kubeadm_configmap_endpoint_verify.stdout_lines
 
 - name: Check if Cilium CLI is installed
   stat:
