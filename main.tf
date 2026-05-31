@@ -1,11 +1,6 @@
 locals {
   vm_requests = yamldecode(file("${path.module}/vm-requests.yaml"))
-  vms         = local.vm_requests.vms
 
-  floating_ip_vms = {
-    for name, vm in local.vms : name => vm
-    if vm.floating_ip
-  }
   k8s_control_plane_requests = yamldecode(file("${path.module}/Kubernetes/test/control-plane-requests.yaml"))
   k8s_worker_requests        = yamldecode(file("${path.module}/Kubernetes/test/worker-node-requests.yaml"))
 
@@ -14,6 +9,11 @@ locals {
     local.k8s_control_plane_requests.control_planes,
     local.k8s_worker_requests.workers
   )
+
+  floating_ip_vms = {
+    for name, vm in local.vms : name => vm
+    if vm.floating_ip
+  }
 }
 
 data "openstack_images_image_v2" "images" {
