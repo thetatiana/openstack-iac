@@ -1,5 +1,76 @@
 ---
-- name: Disable swap immediately
+- name: Update apt cache
+  apt:
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+  register: apt_cache
+  retries: 3
+  delay: 20
+  until: apt_cache is succeeded
+
+- name: Install base packages
+  apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gpg
+      - conntrack
+    state: present
+    lock_timeout: 300
+  register: base_packages
+  retries: 3
+  delay: 20
+  until: base_packages is succeeded
+
+- name: Install container runtime packages
+  apt:
+    name:
+      - containerd
+    state: present
+    lock_timeout: 300
+  register: container_runtime_packages
+  retries: 3
+  delay: 20
+  until: container_runtime_packages is succeeded
+
+- name: Create containerd config directory
+  file:
+    path: /etc/containerd
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Generate default containerd config
+  shell: |
+    containerd config default > /etc/containerd/config.toml
+  args:
+    creates: /etc/containerd/config.toml
+
+- name: Enable systemd cgroup driver for containerd
+  replace:
+    path: /etc/containerd/config.toml
+    regexp: 'SystemdCgroup = false'
+    replace: 'SystemdCgroup = true'
+  register: containerd_cgroup_config
+
+- name: Restart and enable containerd
+  systemd:
+    name: containerd
+    state: restarted
+    enabled: true
+    daemon_reload: true
+  when: containerd_cgroup_config.changed
+
+- name: Ensure containerd is started and enabled
+  systemd:
+    name: containerd
+    state: started
+    enabled: true
+
+- name: Disable swap for current session
   command: swapoff -a
   changed_when: false
 
@@ -9,15 +80,13 @@
     regexp: '^([^#].*\sswap\s.*)$'
     replace: '# \1'
 
-- name: Load overlay module
+- name: Load kernel modules required by Kubernetes
   modprobe:
-    name: overlay
+    name: "{{ item }}"
     state: present
-
-- name: Load br_netfilter module
-  modprobe:
-    name: br_netfilter
-    state: present
+  loop:
+    - overlay
+    - br_netfilter
 
 - name: Persist Kubernetes kernel modules
   copy:
@@ -29,65 +98,25 @@
     group: root
     mode: "0644"
 
-- name: Configure Kubernetes sysctl params
+- name: Configure Kubernetes sysctl settings
   copy:
-    dest: /etc/sysctl.d/kubernetes.conf
+    dest: /etc/sysctl.d/99-kubernetes.conf
     content: |
       net.bridge.bridge-nf-call-iptables = 1
       net.bridge.bridge-nf-call-ip6tables = 1
       net.ipv4.ip_forward = 1
+      net.ipv4.conf.all.rp_filter = 0
+      net.ipv4.conf.default.rp_filter = 0
+      net.ipv4.conf.ens3.rp_filter = 0
     owner: root
     group: root
     mode: "0644"
 
-- name: Apply sysctl params
+- name: Apply Kubernetes sysctl settings
   command: sysctl --system
   changed_when: false
 
-- name: Install base packages
-  apt:
-    name:
-      - apt-transport-https
-      - ca-certificates
-      - conntrack
-      - curl
-      - gpg
-      - lsb-release
-      - software-properties-common
-    state: present
-    update_cache: true
-
-- name: Install containerd
-  apt:
-    name: containerd
-    state: present
-
-- name: Create containerd config directory
-  file:
-    path: /etc/containerd
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
-
-- name: Generate default containerd config
-  shell: containerd config default > /etc/containerd/config.toml
-  args:
-    creates: /etc/containerd/config.toml
-
-- name: Enable SystemdCgroup for containerd
-  replace:
-    path: /etc/containerd/config.toml
-    regexp: 'SystemdCgroup = false'
-    replace: 'SystemdCgroup = true'
-
-- name: Restart and enable containerd
-  systemd:
-    name: containerd
-    state: restarted
-    enabled: true
-
-- name: Create Kubernetes apt keyrings directory
+- name: Create Kubernetes apt keyring directory
   file:
     path: /etc/apt/keyrings
     state: directory
@@ -111,14 +140,75 @@
     group: root
     mode: "0644"
 
+- name: Stop apt background services
+  systemd:
+    name: "{{ item }}"
+    state: stopped
+  loop:
+    - apt-daily.service
+    - apt-daily-upgrade.service
+    - unattended-upgrades.service
+  failed_when: false
+
+- name: Disable apt background timers
+  systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop:
+    - apt-daily.timer
+    - apt-daily-upgrade.timer
+  failed_when: false
+
+- name: Wait for apt/dpkg locks to be released
+  shell: |
+    while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 \
+       || fuser /var/lib/dpkg/lock >/dev/null 2>&1 \
+       || fuser /var/cache/apt/archives/lock >/dev/null 2>&1; do
+      sleep 5
+    done
+  changed_when: false
+  async: 300
+  poll: 5
+
+- name: Check Kubernetes apt repository availability
+  uri:
+    url: https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release
+    method: HEAD
+    follow_redirects: safe
+    timeout: 15
+    status_code:
+      - 200
+      - 302
+  register: kubernetes_repo_check
+  retries: 3
+  delay: 10
+  until: kubernetes_repo_check is succeeded
+
+- name: Update apt cache before Kubernetes package install
+  apt:
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+  register: kubernetes_apt_cache
+  retries: 3
+  delay: 20
+  until: kubernetes_apt_cache is succeeded
+
 - name: Install Kubernetes packages
   apt:
     name:
-      - kubelet
-      - kubeadm
-      - kubectl
+      - kubelet=1.31.14-1.1
+      - kubeadm=1.31.14-1.1
+      - kubectl=1.31.14-1.1
     state: present
-    update_cache: true
+    lock_timeout: 300
+  register: kubernetes_packages
+  retries: 3
+  delay: 30
+  until: kubernetes_packages is succeeded
+  async: 600
+  poll: 10
 
 - name: Hold Kubernetes packages
   dpkg_selections:
@@ -129,7 +219,7 @@
     - kubeadm
     - kubectl
 
-- name: Enable kubelet
+- name: Ensure kubelet is enabled
   systemd:
     name: kubelet
     enabled: true
