@@ -203,7 +203,11 @@
   failed_when: false
 
 - name: Install Cilium CNI
-  command: cilium install
+  command: >
+    cilium install
+    --set ipam.mode=cluster-pool
+    --set ipam.operator.clusterPoolIPv4PodCIDRList=172.16.0.0/16
+    --set ipam.operator.clusterPoolIPv4MaskSize=24
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
   when: cilium_status.rc != 0
@@ -222,6 +226,17 @@
     KUBECONFIG: /etc/kubernetes/admin.conf
   changed_when: false
   when: cilium_wait.rc != 0
+
+- name: Ensure Cilium CNI is configured with cluster pod CIDR
+  command: >
+    cilium upgrade
+    --set ipam.mode=cluster-pool
+    --set ipam.operator.clusterPoolIPv4PodCIDRList=172.16.0.0/16
+    --set ipam.operator.clusterPoolIPv4MaskSize=24
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: cilium_upgrade
+  changed_when: "'No changes' not in cilium_upgrade.stdout"
 
 - name: Generate kubeadm join command
   command: kubeadm token create --print-join-command
