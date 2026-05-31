@@ -10,6 +10,11 @@ locals {
     local.k8s_worker_requests.workers
   )
 
+  k8s_vms = {
+    for name, vm in local.vms : name => vm
+    if try(vm.cluster, null) != null
+  }
+
   floating_ip_vms = {
     for name, vm in local.vms : name => vm
     if vm.floating_ip
@@ -68,11 +73,36 @@ resource "openstack_networking_secgroup_rule_v2" "ssh" {
   security_group_id = openstack_networking_secgroup_v2.vm[each.key].id
 }
 
-resource "openstack_networking_secgroup_rule_v2" "private_internal" {
-  for_each = local.vms
+resource "openstack_networking_secgroup_rule_v2" "k8s_private_tcp" {
+  for_each = local.k8s_vms
 
   direction         = "ingress"
   ethertype         = "IPv4"
+  protocol          = "tcp"
+  port_range_min    = 1
+  port_range_max    = 65535
+  remote_ip_prefix  = var.private_subnet_cidr
+  security_group_id = openstack_networking_secgroup_v2.vm[each.key].id
+}
+
+resource "openstack_networking_secgroup_rule_v2" "k8s_private_udp" {
+  for_each = local.k8s_vms
+
+  direction         = "ingress"
+  ethertype         = "IPv4"
+  protocol          = "udp"
+  port_range_min    = 1
+  port_range_max    = 65535
+  remote_ip_prefix  = var.private_subnet_cidr
+  security_group_id = openstack_networking_secgroup_v2.vm[each.key].id
+}
+
+resource "openstack_networking_secgroup_rule_v2" "k8s_private_icmp" {
+  for_each = local.k8s_vms
+
+  direction         = "ingress"
+  ethertype         = "IPv4"
+  protocol          = "icmp"
   remote_ip_prefix  = var.private_subnet_cidr
   security_group_id = openstack_networking_secgroup_v2.vm[each.key].id
 }
