@@ -195,18 +195,16 @@
   delay: 20
   until: kubernetes_apt_cache is succeeded
 
-- name: Install Kubernetes packages
-  apt:
-    name:
-      - kubelet=1.31.14-1.1
-      - kubeadm=1.31.14-1.1
-      - kubectl=1.31.14-1.1
-    state: present
-    lock_timeout: 300
+- name: Install Kubernetes packages with hard timeout
+  shell: |
+    timeout 300 apt-get install -y \
+      kubelet=1.31.14-1.1 \
+      kubeadm=1.31.14-1.1 \
+      kubectl=1.31.14-1.1
   register: kubernetes_packages
   retries: 3
   delay: 30
-  until: kubernetes_packages is succeeded
+  until: kubernetes_packages.rc == 0
 
 - name: Hold Kubernetes packages
   dpkg_selections:
