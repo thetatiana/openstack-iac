@@ -188,7 +188,7 @@
 - name: Update apt cache before Kubernetes package install
   apt:
     update_cache: true
-    cache_valid_time: 3600
+    cache_valid_time: 0
     lock_timeout: 300
   register: kubernetes_apt_cache
   retries: 3
@@ -207,8 +207,6 @@
   retries: 3
   delay: 30
   until: kubernetes_packages is succeeded
-  async: 600
-  poll: 10
 
 - name: Hold Kubernetes packages
   dpkg_selections:
