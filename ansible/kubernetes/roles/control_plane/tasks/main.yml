@@ -9,9 +9,9 @@
     kubeadm init
     --pod-network-cidr=172.16.0.0/16
     --service-cidr=10.96.0.0/12
-    --apiserver-advertise-address={{ ansible_default_ipv4.address }}
-    --apiserver-cert-extra-sans={{ ansible_host }}
-    --control-plane-endpoint={{ ansible_host }}:6443
+    --apiserver-advertise-address={{ k8s_private_ip }}
+    --apiserver-cert-extra-sans={{ k8s_api_endpoint }}
+    --control-plane-endpoint={{ k8s_api_endpoint }}:6443
   when: not kubeadm_admin_conf.stat.exists
 
 - name: Create kubeconfig directory for ubuntu user
@@ -45,14 +45,14 @@
       apiVersion: kubeadm.k8s.io/v1beta4
       kind: ClusterConfiguration
       kubernetesVersion: v1.31.14
-      controlPlaneEndpoint: {{ ansible_host }}:6443
+      controlPlaneEndpoint: {{ k8s_api_endpoint }}:6443
       networking:
         podSubnet: 172.16.0.0/16
         serviceSubnet: 10.96.0.0/12
       apiServer:
         certSANs:
-          - {{ ansible_default_ipv4.address }}
-          - {{ ansible_host }}
+          - {{ k8s_private_ip }}
+          - {{ k8s_api_endpoint }}
           - {{ inventory_hostname }}
           - kubernetes
           - kubernetes.default
@@ -63,7 +63,7 @@
     mode: "0600"
   when:
     - kubeadm_admin_conf.stat.exists
-    - ansible_host not in apiserver_cert_sans.stdout
+    - k8s_api_endpoint not in apiserver_cert_sans.stdout
 
 - name: Backup current apiserver certificate
   shell: |
@@ -109,29 +109,35 @@
   register: kubeadm_configmap
   changed_when: false
 
-- name: Write kubeadm ConfigMap with floating API endpoint
+- name: Write kubeadm ConfigMap with configured API endpoint
   copy:
     dest: /tmp/kubeadm-config.yaml
     content: >-
       {{
         kubeadm_configmap.stdout
-        | replace(ansible_default_ipv4.address ~ ':6443', ansible_host ~ ':6443')
-        | replace(ansible_default_ipv4.address, ansible_host)
+        | replace(k8s_private_ip ~ ':6443', k8s_api_endpoint ~ ':6443')
+        | replace('advertiseAddress: ' ~ k8s_private_ip, 'advertiseAddress: ' ~ k8s_api_endpoint)
       }}
     owner: root
     group: root
     mode: "0600"
-  when: ansible_default_ipv4.address in kubeadm_configmap.stdout
+  when:
+    - k8s_private_ip is defined
+    - k8s_api_endpoint is defined
+    - k8s_private_ip in kubeadm_configmap.stdout
 
-- name: Apply kubeadm ConfigMap with floating API endpoint
+- name: Apply kubeadm ConfigMap with configured API endpoint
   command: kubectl apply -f /tmp/kubeadm-config.yaml
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
-  when: ansible_default_ipv4.address in kubeadm_configmap.stdout
+  when:
+    - k8s_private_ip is defined
+    - k8s_api_endpoint is defined
+    - k8s_private_ip in kubeadm_configmap.stdout
 
 - name: Verify kubeadm ConfigMap endpoint after update
   shell: |
-    kubectl -n kube-system get cm kubeadm-config -o yaml | grep -E "{{ ansible_default_ipv4.address }}|{{ ansible_host }}" || true
+    kubectl -n kube-system get cm kubeadm-config -o yaml | grep -E "{{ k8s_private_ip }}|{{ k8s_api_endpoint }}" || true
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
   register: kubeadm_configmap_endpoint_verify
@@ -193,10 +199,10 @@
   register: kubeadm_join_command
   changed_when: false
 
-- name: Save kubeadm join command with floating endpoint
+- name: Save kubeadm join command with configured API endpoint
   copy:
     dest: /tmp/kubeadm_join_command.sh
-    content: "{{ kubeadm_join_command.stdout | regex_replace('kubeadm join [^ ]+', 'kubeadm join ' ~ ansible_host ~ ':6443') }}\n"
+    content: "{{ kubeadm_join_command.stdout | regex_replace('kubeadm join [^ ]+', 'kubeadm join ' ~ k8s_api_endpoint ~ ':6443') }}\n"
     owner: root
     group: root
     mode: "0600"
