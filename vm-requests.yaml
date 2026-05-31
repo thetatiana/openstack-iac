@@ -1,20 +1,20 @@
-vms:
-  dev-ubuntu-01:
-    image: ubuntu-24.04
-    flavor: m1.small
-    network: private
-    keypair: default-key
-    floating_ip: true
-  dev-ubuntu-02:
-    image: ubuntu-24.04
-    flavor: m1.small
-    network: private
-    keypair: default-key
-    floating_ip: false
-  dev-ubuntu-03:
-    image: ubuntu-24.04
-    flavor: m1.small
-    network: private
-    keypair: default-key
-    floating_ip: false
-    admin_cidr: 192.168.0.0/24
+# vms:
+#   dev-ubuntu-01:
+#     image: ubuntu-24.04
+#     flavor: m1.small
+#     network: private
+#     keypair: default-key
+#     floating_ip: true
+#   dev-ubuntu-02:
+#     image: ubuntu-24.04
+#     flavor: m1.small
+#     network: private
+#     keypair: default-key
+#     floating_ip: false
+#   dev-ubuntu-03:
+#     image: ubuntu-24.04
+#     flavor: m1.small
+#     network: private
+#     keypair: default-key
+#     floating_ip: false
+#     admin_cidr: 192.168.0.0/24
