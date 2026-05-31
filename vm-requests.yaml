@@ -1,0 +1,14 @@
+vms:
+  dev-ubuntu-01:
+    image: ubuntu-24.04
+    flavor: m1.small
+    network: private
+    keypair: default-key
+    floating_ip: true
+
+  dev-ubuntu-02:
+    image: ubuntu-24.04
+    flavor: m1.small
+    network: private
+    keypair: default-key
+    floating_ip: false
