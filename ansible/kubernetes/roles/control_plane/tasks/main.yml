@@ -95,6 +95,28 @@
 - name: Flush handlers after apiserver certificate renewal
   meta: flush_handlers
 
+- name: Read kubeadm ConfigMap
+  command: kubectl -n kube-system get cm kubeadm-config -o yaml
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: kubeadm_configmap
+  changed_when: false
+
+- name: Write kubeadm ConfigMap with floating controlPlaneEndpoint
+  copy:
+    dest: /tmp/kubeadm-config.yaml
+    content: "{{ kubeadm_configmap.stdout | replace(ansible_default_ipv4.address ~ ':6443', ansible_host ~ ':6443') }}"
+    owner: root
+    group: root
+    mode: "0600"
+  when: ansible_default_ipv4.address ~ ':6443' in kubeadm_configmap.stdout
+
+- name: Apply kubeadm ConfigMap with floating controlPlaneEndpoint
+  command: kubectl apply -f /tmp/kubeadm-config.yaml
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  when: ansible_default_ipv4.address ~ ':6443' in kubeadm_configmap.stdout
+
 - name: Check if Cilium CLI is installed
   stat:
     path: /usr/local/bin/cilium

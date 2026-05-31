@@ -4,6 +4,16 @@
     path: /etc/kubernetes/kubelet.conf
   register: kubelet_conf
 
+- name: Reset partial kubeadm state if worker is not joined
+  command: kubeadm reset -f
+  when: not kubelet_conf.stat.exists
+
+- name: Restart kubelet after reset
+  systemd:
+    name: kubelet
+    state: restarted
+  when: not kubelet_conf.stat.exists
+
 - name: Read kubeadm join command from control-plane
   slurp:
     src: /tmp/kubeadm_join_command.sh
