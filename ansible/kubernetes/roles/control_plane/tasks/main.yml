@@ -72,7 +72,7 @@
     cp -a /etc/kubernetes/pki/apiserver.key /root/k8s-cert-backup/apiserver.key.$(date +%s)
   when:
     - kubeadm_admin_conf.stat.exists
-    - ansible_host not in apiserver_cert_sans.stdout
+    - k8s_api_endpoint not in apiserver_cert_sans.stdout
 
 - name: Remove current apiserver certificate
   file:
@@ -83,14 +83,14 @@
     - /etc/kubernetes/pki/apiserver.key
   when:
     - kubeadm_admin_conf.stat.exists
-    - ansible_host not in apiserver_cert_sans.stdout
+    - k8s_api_endpoint not in apiserver_cert_sans.stdout
 
-- name: Renew apiserver certificate with floating IP SAN
+- name: Renew apiserver certificate with configured API endpoint SAN
   command: kubeadm init phase certs apiserver --config /tmp/kubeadm-renew-apiserver.yaml
   register: apiserver_cert_renew
   when:
     - kubeadm_admin_conf.stat.exists
-    - ansible_host not in apiserver_cert_sans.stdout
+    - k8s_api_endpoint not in apiserver_cert_sans.stdout
 
 - name: Restart kube-apiserver static pod after certificate renewal
   shell: |
@@ -112,40 +112,60 @@
 - name: Write kubeadm ConfigMap with configured API endpoint
   copy:
     dest: /tmp/kubeadm-config.yaml
-    content: >-
-      {{
-        kubeadm_configmap.stdout
-        | replace(k8s_private_ip ~ ':6443', k8s_api_endpoint ~ ':6443')
-        | replace('advertiseAddress: ' ~ k8s_private_ip, 'advertiseAddress: ' ~ k8s_api_endpoint)
-      }}
+    content: "{{ kubeadm_configmap.stdout | replace(k8s_private_ip ~ ':6443', k8s_api_endpoint ~ ':6443') | replace('advertiseAddress: ' ~ k8s_private_ip, 'advertiseAddress: ' ~ k8s_api_endpoint) }}\n"
     owner: root
     group: root
     mode: "0600"
-  when:
-    - k8s_private_ip is defined
-    - k8s_api_endpoint is defined
-    - k8s_private_ip in kubeadm_configmap.stdout
+  when: k8s_private_ip in kubeadm_configmap.stdout
 
 - name: Apply kubeadm ConfigMap with configured API endpoint
-  command: kubectl apply -f /tmp/kubeadm-config.yaml
+  command: kubectl replace -f /tmp/kubeadm-config.yaml
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
-  when:
-    - k8s_private_ip is defined
-    - k8s_api_endpoint is defined
-    - k8s_private_ip in kubeadm_configmap.stdout
+  when: k8s_private_ip in kubeadm_configmap.stdout
 
-- name: Verify kubeadm ConfigMap endpoint after update
-  shell: |
-    kubectl -n kube-system get cm kubeadm-config -o yaml | grep -E "{{ k8s_private_ip }}|{{ k8s_api_endpoint }}" || true
+- name: Read cluster-info ConfigMap
+  command: kubectl -n kube-public get cm cluster-info -o yaml
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
-  register: kubeadm_configmap_endpoint_verify
+  register: cluster_info_configmap
   changed_when: false
 
-- name: Show kubeadm ConfigMap endpoint verification
+- name: Write cluster-info ConfigMap with configured API endpoint
+  copy:
+    dest: /tmp/cluster-info.yaml
+    content: "{{ cluster_info_configmap.stdout | replace(k8s_private_ip ~ ':6443', k8s_api_endpoint ~ ':6443') | replace('https://' ~ k8s_private_ip, 'https://' ~ k8s_api_endpoint) }}\n"
+    owner: root
+    group: root
+    mode: "0600"
+  when: k8s_private_ip in cluster_info_configmap.stdout
+
+- name: Apply cluster-info ConfigMap with configured API endpoint
+  command: kubectl replace -f /tmp/cluster-info.yaml
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  when: k8s_private_ip in cluster_info_configmap.stdout
+
+- name: Verify Kubernetes discovery endpoints
+  shell: |
+    echo "=== kubeadm-config ==="
+    kubectl -n kube-system get cm kubeadm-config -o yaml | grep -E "{{ k8s_private_ip }}|{{ k8s_api_endpoint }}" || true
+
+    echo "=== cluster-info ==="
+    kubectl -n kube-public get cm cluster-info -o yaml | grep -E "{{ k8s_private_ip }}|{{ k8s_api_endpoint }}" || true
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: kubernetes_endpoint_verify
+  changed_when: false
+
+- name: Show Kubernetes discovery endpoint verification
   debug:
-    var: kubeadm_configmap_endpoint_verify.stdout_lines
+    var: kubernetes_endpoint_verify.stdout_lines
+
+- name: Fail if Kubernetes discovery still contains private API endpoint
+  fail:
+    msg: "Kubernetes discovery data still contains {{ k8s_private_ip }}; worker join would still use the broken private endpoint."
+  when: k8s_private_ip in kubernetes_endpoint_verify.stdout
 
 - name: Check if Cilium CLI is installed
   stat:
