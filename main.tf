@@ -6,6 +6,14 @@ locals {
     for name, vm in local.vms : name => vm
     if vm.floating_ip
   }
+  k8s_control_plane_requests = yamldecode(file("${path.module}/Kubernetes/test/control-plane-requests.yaml"))
+  k8s_worker_requests        = yamldecode(file("${path.module}/Kubernetes/test/worker-node-requests.yaml"))
+
+  vms = merge(
+    local.vm_requests.vms,
+    local.k8s_control_plane_requests.control_planes,
+    local.k8s_worker_requests.workers
+  )
 }
 
 data "openstack_images_image_v2" "images" {
@@ -57,6 +65,15 @@ resource "openstack_networking_secgroup_rule_v2" "ssh" {
   port_range_min    = 22
   port_range_max    = 22
   remote_ip_prefix  = coalesce(try(each.value.admin_cidr, null), var.default_admin_cidr)
+  security_group_id = openstack_networking_secgroup_v2.vm[each.key].id
+}
+
+resource "openstack_networking_secgroup_rule_v2" "private_internal" {
+  for_each = local.vms
+
+  direction         = "ingress"
+  ethertype         = "IPv4"
+  remote_ip_prefix  = var.private_subnet_cidr
   security_group_id = openstack_networking_secgroup_v2.vm[each.key].id
 }
 

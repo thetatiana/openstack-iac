@@ -1,0 +1,8 @@
+cluster:
+  name: test
+  context: test
+  kubernetes_version_minor: v1.36
+  pod_network_cidr: 172.16.0.0/16
+  service_cidr: 10.96.0.0/12
+  cni: cilium
+  ssh_user: ubuntu
