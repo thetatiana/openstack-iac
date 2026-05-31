@@ -1,4 +1,4 @@
-# vms:
+vms:
 #   dev-ubuntu-01:
 #     image: ubuntu-24.04
 #     flavor: m1.small
