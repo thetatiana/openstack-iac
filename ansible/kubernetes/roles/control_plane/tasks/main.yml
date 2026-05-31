@@ -236,30 +236,36 @@
     - cilium_upgrade is defined
     - cilium_upgrade.changed
 
-- name: Wait for Cilium rollout after configuration update
-  command: kubectl -n kube-system rollout status ds/cilium --timeout=180s
+- name: Wait briefly for Cilium rollout after configuration update
+  command: kubectl -n kube-system rollout status ds/cilium --timeout=60s
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
+  register: cilium_rollout
   changed_when: false
   failed_when: false
   when:
     - cilium_upgrade is defined
     - cilium_upgrade.changed
 
+- name: Show Cilium pods after rollout attempt
+  command: kubectl -n kube-system get pods -l k8s-app=cilium -o wide
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  changed_when: false
+
 - name: Wait for Cilium to become ready
-  command: cilium status --wait --wait-duration 120s
+  command: cilium status --wait --wait-duration 60s
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
   changed_when: false
   register: cilium_wait
   failed_when: false
 
-- name: Show Cilium status if not ready yet
+- name: Show Cilium status
   command: cilium status --wait=false
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
   changed_when: false
-  when: cilium_wait.rc != 0
 
 - name: Generate kubeadm join command
   command: kubeadm token create --print-join-command
