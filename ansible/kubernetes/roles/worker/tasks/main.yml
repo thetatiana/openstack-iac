@@ -1,0 +1,17 @@
+---
+- name: Check if worker already joined the cluster
+  stat:
+    path: /etc/kubernetes/kubelet.conf
+  register: kubelet_conf
+
+- name: Read kubeadm join command from control-plane
+  slurp:
+    src: /tmp/kubeadm_join_command.sh
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  run_once: true
+  register: kubeadm_join_command_file
+  when: not kubelet_conf.stat.exists
+
+- name: Join worker to Kubernetes cluster
+  command: "{{ kubeadm_join_command_file.content | b64decode | trim }}"
+  when: not kubelet_conf.stat.exists

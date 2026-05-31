@@ -10,3 +10,9 @@
   become: true
   roles:
     - control_plane
+
+- name: Join Kubernetes workers
+  hosts: workers
+  become: true
+  roles:
+    - worker
