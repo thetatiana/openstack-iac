@@ -49,6 +49,7 @@
     name:
       - apt-transport-https
       - ca-certificates
+      - conntrack
       - curl
       - gpg
       - lsb-release
