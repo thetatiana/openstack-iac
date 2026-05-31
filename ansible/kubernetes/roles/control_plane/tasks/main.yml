@@ -34,12 +34,20 @@
     path: /usr/local/bin/cilium
   register: cilium_cli
 
+- name: Check if Cilium CLI archive already exists
+  stat:
+    path: /tmp/cilium-linux-amd64.tar.gz
+  register: cilium_cli_archive
+  when: not cilium_cli.stat.exists
+
 - name: Download Cilium CLI archive
   get_url:
     url: https://github.com/cilium/cilium-cli/releases/latest/download/cilium-linux-amd64.tar.gz
     dest: /tmp/cilium-linux-amd64.tar.gz
     mode: "0644"
-  when: not cilium_cli.stat.exists
+  when:
+    - not cilium_cli.stat.exists
+    - not cilium_cli_archive.stat.exists
 
 - name: Extract Cilium CLI
   unarchive:
@@ -48,16 +56,19 @@
     remote_src: true
   when: not cilium_cli.stat.exists
 
+- name: Check if Cilium is already installed
+  command: cilium status
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: cilium_status
+  changed_when: false
+  failed_when: false
+
 - name: Install Cilium CNI
   command: cilium install
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
-  register: cilium_install
-  changed_when: "'already exists' not in cilium_install.stdout"
-  failed_when:
-    - cilium_install.rc != 0
-    - "'already exists' not in cilium_install.stderr"
-    - "'already exists' not in cilium_install.stdout"
+  when: cilium_status.rc != 0
 
 - name: Wait for Cilium to become ready
   command: cilium status --wait
