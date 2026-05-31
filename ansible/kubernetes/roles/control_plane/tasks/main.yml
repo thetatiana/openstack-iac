@@ -162,10 +162,12 @@
   debug:
     var: kubernetes_endpoint_verify.stdout_lines
 
-- name: Fail if Kubernetes discovery still contains private API endpoint
+- name: Fail if Kubernetes discovery still contains wrong API endpoint
   fail:
-    msg: "Kubernetes discovery data still contains {{ k8s_private_ip }}; worker join would still use the broken private endpoint."
-  when: k8s_private_ip in kubernetes_endpoint_verify.stdout
+    msg: "Kubernetes discovery data still contains unexpected API endpoint. Check k8s_private_ip={{ k8s_private_ip }} and k8s_api_endpoint={{ k8s_api_endpoint }}."
+  when:
+    - k8s_private_ip != k8s_api_endpoint
+    - k8s_private_ip in kubernetes_endpoint_verify.stdout
 
 - name: Check if Cilium CLI is installed
   stat:
@@ -195,14 +197,14 @@
   when: not cilium_cli.stat.exists
 
 - name: Check if Cilium is already installed
-  command: cilium status
+  command: cilium status --wait=false
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
   register: cilium_status
   changed_when: false
   failed_when: false
 
-- name: Install Cilium CNI
+- name: Install Cilium CNI with configured pod CIDR
   command: >
     cilium install
     --set ipam.mode=cluster-pool
@@ -211,6 +213,38 @@
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
   when: cilium_status.rc != 0
+
+- name: Ensure Cilium CNI is configured with cluster pod CIDR
+  command: >
+    cilium upgrade
+    --set ipam.mode=cluster-pool
+    --set ipam.operator.clusterPoolIPv4PodCIDRList=172.16.0.0/16
+    --set ipam.operator.clusterPoolIPv4MaskSize=24
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: cilium_upgrade
+  changed_when:
+    - "'No changes' not in cilium_upgrade.stdout"
+    - "'No changes' not in cilium_upgrade.stderr"
+  when: cilium_status.rc == 0
+
+- name: Restart Cilium DaemonSet after configuration update
+  command: kubectl -n kube-system rollout restart ds/cilium
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  when:
+    - cilium_upgrade is defined
+    - cilium_upgrade.changed
+
+- name: Wait for Cilium rollout after configuration update
+  command: kubectl -n kube-system rollout status ds/cilium --timeout=180s
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  changed_when: false
+  failed_when: false
+  when:
+    - cilium_upgrade is defined
+    - cilium_upgrade.changed
 
 - name: Wait for Cilium to become ready
   command: cilium status --wait --wait-duration 120s
@@ -226,17 +260,6 @@
     KUBECONFIG: /etc/kubernetes/admin.conf
   changed_when: false
   when: cilium_wait.rc != 0
-
-- name: Ensure Cilium CNI is configured with cluster pod CIDR
-  command: >
-    cilium upgrade
-    --set ipam.mode=cluster-pool
-    --set ipam.operator.clusterPoolIPv4PodCIDRList=172.16.0.0/16
-    --set ipam.operator.clusterPoolIPv4MaskSize=24
-  environment:
-    KUBECONFIG: /etc/kubernetes/admin.conf
-  register: cilium_upgrade
-  changed_when: "'No changes' not in cilium_upgrade.stdout"
 
 - name: Generate kubeadm join command
   command: kubeadm token create --print-join-command
