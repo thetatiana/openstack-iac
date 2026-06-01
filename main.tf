@@ -1,28 +1,24 @@
 locals {
   vm_requests = yamldecode(file("${path.module}/vm-requests.yaml"))
 
-  k8s_cluster_dirs = fileset("${path.module}/Kubernetes", "*")
+  k8s_control_plane_request_files = fileset(
+    "${path.module}/Kubernetes",
+    "*/control-plane-requests.yaml"
+  )
 
-  k8s_control_plane_request_files = [
-    for cluster in local.k8s_cluster_dirs :
-    "${path.module}/Kubernetes/${cluster}/control-plane-requests.yaml"
-    if fileexists("${path.module}/Kubernetes/${cluster}/control-plane-requests.yaml")
-  ]
-
-  k8s_worker_request_files = [
-    for cluster in local.k8s_cluster_dirs :
-    "${path.module}/Kubernetes/${cluster}/worker-node-requests.yaml"
-    if fileexists("${path.module}/Kubernetes/${cluster}/worker-node-requests.yaml")
-  ]
+  k8s_worker_request_files = fileset(
+    "${path.module}/Kubernetes",
+    "*/worker-node-requests.yaml"
+  )
 
   k8s_control_plane_maps = [
     for request_file in local.k8s_control_plane_request_files :
-    yamldecode(file(request_file)).control_planes
+    yamldecode(file("${path.module}/Kubernetes/${request_file}")).control_planes
   ]
 
   k8s_worker_maps = [
     for request_file in local.k8s_worker_request_files :
-    yamldecode(file(request_file)).workers
+    yamldecode(file("${path.module}/Kubernetes/${request_file}")).workers
   ]
 
   k8s_control_planes = length(local.k8s_control_plane_maps) > 0 ? merge(local.k8s_control_plane_maps...) : {}
