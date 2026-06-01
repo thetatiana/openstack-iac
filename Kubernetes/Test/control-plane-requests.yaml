@@ -1,5 +1,5 @@
 control_planes:
-  k8s-test-control-01:
+#  k8s-test-control-01:
     # image: ubuntu-24.04
     # flavor: k8s.small
     # network: private
