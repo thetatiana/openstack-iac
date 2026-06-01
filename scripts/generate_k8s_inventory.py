@@ -243,7 +243,7 @@ def write_inventory(
     content.append("ansible_user=ubuntu")
     content.append("ansible_ssh_private_key_file=/home/gitlab-runner/.ssh/openstack_default_key")
     content.append("ansible_python_interpreter=/usr/bin/python3")
-    content.append("ansible_ssh_common_args='-o StrictHostKeyChecking=accept-new'")
+    content.append("ansible_ssh_common_args='-o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes'")
     content.append("")
 
     path.write_text("\n".join(content), encoding="utf-8")
