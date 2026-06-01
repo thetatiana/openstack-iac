@@ -1,8 +1,0 @@
-workers:
-  k8s-prod-worker-01:
-    image: ubuntu-24.04
-    flavor: k8s.small
-    network: private
-    keypair: default-key
-    floating_ip: true
-    admin_cidr: 192.168.0.0/24
