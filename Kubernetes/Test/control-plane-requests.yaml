@@ -1,10 +1,10 @@
 control_planes:
   k8s-test-control-01:
-    image: ubuntu-24.04
-    flavor: k8s.small
-    network: private
-    keypair: default-key
-    floating_ip: true
-    admin_cidr: 192.168.0.0/24
-    cluster: test
-    role: control-plane
+    # image: ubuntu-24.04
+    # flavor: k8s.small
+    # network: private
+    # keypair: default-key
+    # floating_ip: true
+    # admin_cidr: 192.168.0.0/24
+    # cluster: test
+    # role: control-plane
