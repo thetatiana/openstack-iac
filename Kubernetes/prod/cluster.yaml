@@ -1,8 +1,0 @@
-cluster:
-  name: prod
-  pod_cidr: 172.16.0.0/16
-  service_cidr: 10.96.0.0/12
-  cilium:
-    ipam_mode: cluster-pool
-    cluster_pool_ipv4_pod_cidr_list: 172.16.0.0/16
-    cluster_pool_ipv4_mask_size: 24
