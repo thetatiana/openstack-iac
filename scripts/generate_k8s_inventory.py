@@ -14,13 +14,20 @@ ROOT = Path.cwd()
 
 
 def run_json(command: list[str]) -> Any:
-    result = subprocess.run(
-        command,
-        check=True,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
+    try:
+        result = subprocess.run(
+            command,
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except subprocess.CalledProcessError as e:
+        raise SystemExit(
+            f"Command failed: {' '.join(e.cmd)}\n"
+            f"stdout:\n{e.stdout}\n"
+            f"stderr:\n{e.stderr}"
+        )
 
     return json.loads(result.stdout)
 
@@ -43,29 +50,50 @@ def get_floating_ips() -> list[dict]:
     return run_json(["openstack", "floating", "ip", "list", "-f", "json"])
 
 
-def extract_ips_from_addresses(addresses: str, network_name: str) -> list[str]:
-    for network_block in addresses.split(";"):
-        network_block = network_block.strip()
-
-        if not network_block.startswith(f"{network_name}="):
-            continue
-
-        raw = network_block.split("=", 1)[1]
-        return [ip.strip() for ip in raw.split(",") if ip.strip()]
-
-    return []
-
-
 def is_private_openstack_ip(ip: str) -> bool:
     return ip.startswith("10.")
 
 
+def extract_ips_from_addresses(addresses: object, network_name: str) -> list[str]:
+    if isinstance(addresses, str):
+        for network_block in addresses.split(";"):
+            network_block = network_block.strip()
+
+            if not network_block.startswith(f"{network_name}="):
+                continue
+
+            raw = network_block.split("=", 1)[1]
+            return [ip.strip() for ip in raw.split(",") if ip.strip()]
+
+        return []
+
+    if isinstance(addresses, dict):
+        network_value = addresses.get(network_name)
+
+        if network_value is None:
+            return []
+
+        if isinstance(network_value, str):
+            return [ip.strip() for ip in network_value.split(",") if ip.strip()]
+
+        if isinstance(network_value, list):
+            result = []
+
+            for item in network_value:
+                if isinstance(item, str):
+                    result.append(item)
+                elif isinstance(item, dict):
+                    ip = item.get("addr") or item.get("ip") or item.get("address")
+                    if ip:
+                        result.append(ip)
+
+            return result
+
+    return []
+
+
 def extract_private_ip(server: dict, network_name: str) -> str:
-    addresses = server.get("addresses", "")
-
-    if not isinstance(addresses, str):
-        raise SystemExit(f"Unexpected addresses format for server {server.get('name')}")
-
+    addresses = server.get("addresses")
     ips = extract_ips_from_addresses(addresses, network_name)
 
     for ip in ips:
@@ -75,23 +103,28 @@ def extract_private_ip(server: dict, network_name: str) -> str:
     if ips:
         return ips[0]
 
-    raise SystemExit(f"Could not extract private IP for server {server.get('name')}")
+    raise SystemExit(
+        f"Could not extract private IP for server "
+        f"{server.get('name') or server.get('Name')}. "
+        f"network={network_name}, addresses={addresses}"
+    )
 
 
 def get_server_port_id(server: dict) -> str:
     server_id = server.get("id") or server.get("ID")
 
     if not server_id:
-        raise SystemExit(f"Could not get server id for {server}")
+        raise SystemExit(f"Could not get server id from server data: {server}")
 
     ports = run_json(["openstack", "port", "list", "--server", server_id, "-f", "json"])
 
     if not ports:
-        raise SystemExit(f"No ports found for server {server.get('name')}")
+        raise SystemExit(f"No ports found for server {server.get('name') or server.get('Name')}")
 
     if len(ports) > 1:
         raise SystemExit(
-            f"Expected exactly one port for server {server.get('name')}, found {len(ports)}"
+            f"Expected exactly one port for server "
+            f"{server.get('name') or server.get('Name')}, found {len(ports)}"
         )
 
     return ports[0]["ID"]
@@ -104,15 +137,37 @@ def get_floating_ip_for_server(server: dict, floating_ips: list[dict]) -> str:
         if fip.get("Port") == port_id:
             return fip["Floating IP Address"]
 
-    # Fallback: parse addresses and pick non-10.* IPv4.
-    addresses = server.get("addresses", "")
+    addresses = server.get("addresses")
+
     if isinstance(addresses, str):
         ips = re.findall(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", addresses)
+
         for ip in ips:
             if not is_private_openstack_ip(ip):
                 return ip
 
-    raise SystemExit(f"No floating IP associated with server {server.get('name')}")
+    if isinstance(addresses, dict):
+        for value in addresses.values():
+            if isinstance(value, str):
+                ips = [ip.strip() for ip in value.split(",") if ip.strip()]
+            elif isinstance(value, list):
+                ips = []
+
+                for item in value:
+                    if isinstance(item, str):
+                        ips.append(item)
+                    elif isinstance(item, dict):
+                        ip = item.get("addr") or item.get("ip") or item.get("address")
+                        if ip:
+                            ips.append(ip)
+            else:
+                ips = []
+
+            for ip in ips:
+                if not is_private_openstack_ip(ip):
+                    return ip
+
+    raise SystemExit(f"No floating IP associated with server {server.get('name') or server.get('Name')}")
 
 
 def load_cluster_requests(cluster: str) -> tuple[dict, dict, dict]:
