@@ -1,5 +1,5 @@
-vms:
-  dev-ubuntu-03:
+control_planes:
+  k8s-prod-control-01:
     image: ubuntu-24.04
     flavor: m1.small
     network: private
