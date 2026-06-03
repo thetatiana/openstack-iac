@@ -1,5 +1,3 @@
-Готово — я опирался на текущую структуру репозитория: Terraform/OpenStack-файлы в корне, каталоги `Kubernetes`, `ansible/kubernetes`, `scripts`, Python-скрипты для генерации VM-заявок и inventory, а также Ansible playbook’и для подготовки control-plane и worker-нод. ([GitHub][1])
-
 # openstack-iac
 
 Infrastructure as Code проект для автоматического развертывания виртуальных машин и Kubernetes-кластеров в OpenStack.
